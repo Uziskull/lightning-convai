@@ -9,6 +9,7 @@ Command Line Interface
 """
 import json
 import logging
+import time
 
 import bert_score
 import click
@@ -108,8 +109,14 @@ def interact(experiment: str) -> None:
 @click.option(
     "--experiment",
     type=click.Path(exists=True),
-    required=True,
+    #required=True,
     help="Path to the experiment folder containing the checkpoint we want to interact with.",
+)
+@click.option(
+    "--epoch",
+    default=-1,
+    type=int,
+    help="Specific checkpoint epoch we want to interact with.",
 )
 @click.option(
     "--test_set",
@@ -161,6 +168,7 @@ def interact(experiment: str) -> None:
 )
 def test(
     experiment: str,
+    epoch: int,
     test_set: str,
     cuda: bool,
     seed: int,
@@ -174,7 +182,13 @@ def test(
     answers and produce replies.
     """
     logging.disable(logging.WARNING)
-    model = PersonaGPT2.from_experiment(experiment)
+    model = None
+    if experiment is not None:
+        model = PersonaGPT2.from_experiment(experiment, None if epoch < 0 else epoch)
+    else:
+        yaml_file = yaml.load(open("configs/example.yaml").read(), Loader=yaml.FullLoader)
+        model_config = PersonaGPT2.ModelConfig(yaml_file)
+        model = PersonaGPT2(model_config.namespace())
     seed_everything(seed)
 
     cuda = cuda and torch.cuda.is_available()
@@ -185,6 +199,7 @@ def test(
         dataset = json.loads(f.read())
 
     replies, rankings = [], []
+    start_time = time.time()
     for dialog in tqdm(dataset, desc="Scoring dialogs...", dynamic_ncols=True):
 
         # 1) Prepares Persona
@@ -314,9 +329,12 @@ def test(
     )
     click.secho(f"BERTScore: {bertscore}", fg="blue")
 
+    final_time = time.time() - start_time
+
     # 8) Saves results.
     if isinstance(to_json, str):
         data = {
+            "eval_time": final_time,
             "results": {
                 "BLEU": bleu,
                 "TER": ter,

@@ -164,7 +164,7 @@ class PersonaGPT2(pl.LightningModule):
         }
 
     @classmethod
-    def from_experiment(cls, experiment_folder: str):
+    def from_experiment(cls, experiment_folder: str, epoch: Optional[int] = None):
         """Function that loads the model from an experiment folder.
 
         :param experiment_folder: Path to the experiment folder.
@@ -178,6 +178,8 @@ class PersonaGPT2(pl.LightningModule):
             file for file in os.listdir(experiment_folder) if file.endswith(".ckpt")
         ]
         checkpoint_path = experiment_folder + checkpoints[-1]
+        if epoch is not None:
+            checkpoint_path = experiment_folder + [file for file in checkpoints if file.endswith(str(epoch) + ".ckpt")][0]
         model = cls.load_from_checkpoint(
             checkpoint_path, hparams=Namespace(**hparams), strict=True
         )

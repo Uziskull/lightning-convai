@@ -9,7 +9,7 @@ patience: 3                               # Number of epochs without improvement
 metric_mode: min                          # 'min' or 'max' depending if we wish to maximize or minimize the metric
 
 # ----------------------------- Model Checkpoint --------------------------------------------------
-save_top_k: 1                             # How many checkpoints we want to save.
+save_top_k: 3                             # How many checkpoints we want to save.
 save_weights_only: True                   # Saves the model weights only
 
 # ----------------------------- Lightning Trainer --------------------------------------------------
@@ -21,15 +21,15 @@ accumulate_grad_batches: 8                # Gradient accumulation steps
 min_epochs: 1                             # Min number of epochs
 max_epochs: 3                             # Max number of epochs
 # limit_train_batches: 0.4                  # To train with a lower percentage of the training data you can use this flag
-# limit_val_batches: 500                  # Same as the previous flag but for validation. 
-# val_check_interval: 0.25                # How often within one training epoch to check the validation set. Can specify as float or int.
-# precision: 16                           # Train with 16 bit precision
-# profiler: True                          # To profile individual steps during training and assist in identifying bottlenecks.
-# resume_from_checkpoint: checkpoint.ckpt # To resume training from a specific checkpoint pass in the path here.
+# limit_val_batches: 500                    # Same as the previous flag but for validation. 
+# val_check_interval: 0.25                  # How often within one training epoch to check the validation set. Can specify as float or int.
+# precision: 16                             # Train with 16 bit precision
+# profiler: True                            # To profile individual steps during training and assist in identifying bottlenecks.
+# resume_from_checkpoint: checkpoint.ckpt   # To resume training from a specific checkpoint pass in the path here.
 
 # --------------------------------- Dataset -------------------------------------------------------
 pretrained_model: gpt2
-# dataset_path: path/to/data.json         # By default we used the PersonaChat corpus but if you respect the same structure other data can be used.
+# dataset_path: path/to/data.json           # By default we used the PersonaChat corpus but if you respect the same structure other data can be used.
 batch_size: 2                             # Batche size used during training.
 max_history: 2                            # Max number of context sentences
 personality_permutations: 2               # Max number of personality sentences
