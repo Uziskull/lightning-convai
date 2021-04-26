@@ -10,6 +10,7 @@ Command Line Interface
 import json
 import logging
 import time
+import os
 
 import bert_score
 import click
@@ -24,6 +25,8 @@ from model.gpt2 import PersonaGPT2
 from pytorch_lightning import seed_everything
 from trainer import TrainerConfig, build_trainer
 
+import torch.nn as nn
+import torch.nn.utils.prune
 
 @click.group()
 def cli():
@@ -48,8 +51,34 @@ def train(config: str) -> None:
     # Build Model
     model_config = PersonaGPT2.ModelConfig(yaml_file)
     model = PersonaGPT2(model_config.namespace())
+    
+    ## Pruning
+    if model_config.prune_mask:
+        click.secho("Applying pruning mask..", fg="yellow")
+        ## Load mask dict
+        mask = torch.load(model_config.prune_mask)
+        ## Apply masks directly to weights and permanently prune them
+        for key in mask.keys():
+            attrs = key.split(".")
+            last_attr = attrs[-1][:-5] # don't count with "_mask"
+            obj = model.gpt2
+            for attr in attrs[:-1]:
+                if attr.isdigit():
+                    obj = obj[int(attr)]
+                else:
+                    obj = getattr(obj, attr)
+            tensor_mask = mask[key].to(torch.device("cpu"))
+            nn.utils.prune.custom_from_mask(obj, name=last_attr, mask=tensor_mask)
+            nn.utils.prune.remove(obj, last_attr)
+        click.secho("Model pruned.", fg="yellow")
+ 
     data = DataModule(model.hparams, model.tokenizer)
     trainer.fit(model, data)
+    
+    ## Quantization
+    if train_configs.quantize:
+        click.secho("Saving quantized model..", fg="yellow")
+        torch.save(model.state_dict(), os.path.join("experiments/", trainer.logger.version, "8bit_model.pt"))
 
 
 @cli.command(name="interact")

@@ -8,12 +8,56 @@ import os
 from argparse import Namespace
 from datetime import datetime
 
+import torch
 import pytorch_lightning as pl
+
+#############################
+
+import pytorch_lightning.callbacks.quantization
+
+from quant_helper import _multiarg_wrap_qat, _multiarg_wrap_quantize
+
+pytorch_lightning.callbacks.quantization.wrap_qat_forward_context = _multiarg_wrap_qat
+pytorch_lightning.callbacks.quantization.wrap_quantize_forward_context = _multiarg_wrap_quantize
+
+#############################
+
 from pytorch_lightning.callbacks import (
     EarlyStopping,
-    LearningRateLogger,
+    LearningRateMonitor,
     ModelCheckpoint,
+    QuantizationAwareTraining
 )
+
+#############################
+
+def _conv1d_to_linear(module):
+    in_size, out_size = module.weight.shape
+    linear = torch.nn.Linear(in_size, out_size)
+    linear.weight.data = module.weight.data.T.contiguous()
+    linear.bias.data = module.bias.data
+    return linear
+
+def conv1d_to_linear(model):
+    """in-place
+    This is for Dynamic Quantization, as Conv1D is not recognized by PyTorch, convert it to nn.Linear
+    """
+    for name in list(model._modules):
+        module = model._modules[name]
+        if isinstance(module, torch.nn.Conv1d):
+            linear = _conv1d_to_linear(module)
+            model._modules[name] = linear
+        else:
+            conv1d_to_linear(module)
+
+class CustomQAT(QuantizationAwareTraining):
+    def on_fit_end(self, trainer, pl_module):
+        # pytorch doesn't support conv1d quantization, so we have to convert it to linear
+        conv1d_to_linear(pl_module)
+        super(CustomQAT, self).on_fit_end(trainer, pl_module)
+        
+#############################
+
 from pytorch_lightning.loggers import TensorBoardLogger
 from utils import Config
 
@@ -74,6 +118,9 @@ class TrainerConfig(Config):
     patience: int = 1
     accumulate_grad_batches: int = 1
 
+    ## Compression
+    quantize: bool = False
+
     def __init__(self, initial_data: dict) -> None:
         trainer_attr = pl.Trainer.default_attributes()
         for key in trainer_attr:
@@ -115,7 +162,7 @@ def build_trainer(hparams: Namespace) -> pl.Trainer:
     )
 
     checkpoint_callback = ModelCheckpoint(
-        filepath=ckpt_path,
+        dirpath=ckpt_path,
         save_top_k=hparams.save_top_k,
         verbose=hparams.verbose,
         monitor=hparams.monitor,
@@ -124,11 +171,38 @@ def build_trainer(hparams: Namespace) -> pl.Trainer:
         mode=hparams.metric_mode,
     )
 
+    callback_list = [
+        LearningRateMonitor()
+    ]
+    if hparams.quantize:
+        torch.backends.quantized.engine = 'qnnpack'
+        callback_list.append(
+            #QuantizationAwareTraining(
+            CustomQAT(
+                input_compatible=True,
+                qconfig="qnnpack"
+                # qconfig=torch.quantization.QConfig(
+                    # activation=torch.quantization.FakeQuantize.with_args(
+                        # observer=torch.quantization.MovingAverageMinMaxObserver,
+                        # quant_min=0,
+                        # quant_max=255,
+                        # reduce_range=False
+                    # ),
+                    # weight=torch.quantization.FakeQuantize.with_args(
+                        # observer=torch.quantization.MovingAverageMinMaxObserver,
+                        # quant_min=0,
+                        # quant_max=255,
+                        # reduce_range=False
+                    # )
+                # )
+            )
+        )
+
     trainer = pl.Trainer(
         logger=tb_logger,
-        checkpoint_callback=checkpoint_callback,
-        early_stop_callback=early_stop_callback,
-        callbacks=[LearningRateLogger()],
+        checkpoint_callback=True,#checkpoint_callback,
+        #early_stop_callback=early_stop_callback,
+        callbacks=callback_list,
         gradient_clip_val=hparams.gradient_clip_val,
         gpus=hparams.gpus,
         log_gpu_memory="all",
@@ -140,7 +214,7 @@ def build_trainer(hparams: Namespace) -> pl.Trainer:
         limit_train_batches=hparams.limit_train_batches,
         limit_val_batches=hparams.limit_val_batches,
         val_check_interval=hparams.val_check_interval,
-        log_save_interval=hparams.log_save_interval,
+        #log_save_interval=hparams.log_save_interval,
         distributed_backend="dp",
         precision=hparams.precision,
         weights_summary="top",

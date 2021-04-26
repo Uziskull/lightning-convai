@@ -54,6 +54,10 @@ class PersonaGPT2(pl.LightningModule):
         max_history: int = 2
         personality_permutations: int = 2
         num_candidates: int = 4
+        
+        ## Compression
+        prune_mask: str = ""
+        quantize: bool = False
 
     def __init__(self, hparams: Namespace):
         super().__init__()
@@ -64,6 +68,12 @@ class PersonaGPT2(pl.LightningModule):
         self.tokenizer = Tokenizer(self.hparams.pretrained_model)
         # Resize embeddings to include the added tokens
         self.gpt2.resize_token_embeddings(self.tokenizer.vocab_size)
+        
+        ## Quantize
+        if self.hparams.quantize:
+            emb_qconf = torch.quantization.float_qparams_weight_only_qconfig
+            self.gpt2.transformer.wte.qconfig = emb_qconf
+            self.gpt2.transformer.wpe.qconfig = emb_qconf
 
     def configure_optimizers(self):
         optimizer = AdamW(
@@ -73,20 +83,37 @@ class PersonaGPT2(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
         return [optimizer], [scheduler]
 
+    # def forward(
+        # self,
+        # input_ids: torch.Tensor,
+        # mc_token_ids: torch.Tensor,
+        # lm_labels: torch.Tensor = None,
+        # mc_labels: torch.Tensor = None,
+        # token_type_ids: torch.Tensor = None,
+    # ) -> GPT2DoubleHeadsModelOutput:
+        # return self.gpt2(
+            # input_ids,
+            # token_type_ids=token_type_ids,
+            # mc_token_ids=mc_token_ids,
+            # mc_labels=mc_labels,
+            # labels=lm_labels,
+            # return_dict=True,
+        # )
+    
     def forward(
         self,
         input_ids: torch.Tensor,
-        mc_token_ids: torch.Tensor,
-        lm_labels: torch.Tensor = None,
-        mc_labels: torch.Tensor = None,
-        token_type_ids: torch.Tensor = None,
+        token_type_ids: torch.Tensor = None
     ) -> GPT2DoubleHeadsModelOutput:
+        for k in ["mc_token_ids", "lm_labels", "mc_labels"]:
+            if k not in self.tempdata:
+                self.tempdata[k] = None
         return self.gpt2(
             input_ids,
             token_type_ids=token_type_ids,
-            mc_token_ids=mc_token_ids,
-            mc_labels=mc_labels,
-            labels=lm_labels,
+            mc_token_ids=self.tempdata['mc_token_ids'],
+            mc_labels=self.tempdata['mc_labels'],
+            labels=self.tempdata['lm_labels'],
             return_dict=True,
         )
 
@@ -102,8 +129,11 @@ class PersonaGPT2(pl.LightningModule):
         Returns:
             - dictionary containing the loss and the metrics to be added to the lightning logger.
         """
-        # input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
-        output = self.forward(*batch)
+        # # input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
+        # output = self.forward(*batch)
+        input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
+        self.tempdata = {'mc_token_ids': mc_token_ids, 'lm_labels': lm_labels, 'mc_labels': mc_labels}
+        output = self.forward(input_ids, token_type_ids)
         loss_val = (
             output.loss * self.hparams.lm_coef + output.mc_loss * self.hparams.mc_coef
         )
@@ -127,8 +157,11 @@ class PersonaGPT2(pl.LightningModule):
 
         :returns: dictionary passed to the validation_end function.
         """
-        # input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
-        output = self.forward(*batch)
+        # # input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
+        # output = self.forward(*batch)
+        input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
+        self.tempdata = {'mc_token_ids': mc_token_ids, 'lm_labels': lm_labels, 'mc_labels': mc_labels}
+        output = self.forward(input_ids, token_type_ids)
         loss_val = (
             output.loss * self.hparams.lm_coef + output.mc_loss * self.hparams.mc_coef
         )
